@@ -1,0 +1,2 @@
+# Pico Motorkit
+This is a test project for driving an [adafruit stepper motor hat](https://www.adafruit.com/product/2348) from a pi pico microcontroller. In particular, it aims to be a high quality stepper motor controller that eventually supports various gantry designs like core xy.

@@ -22,11 +22,12 @@ using namespace std::chrono_literals;
 //GPIOButton button(3);
 //DiscreteOut outputLine(4);
 std::unique_ptr<MotorKit> motors;
+float moveRpm = 120.0f;
 
 void releaseSteppers()
 {
-  motors->stepper0().release();
-  motors->stepper1().release();
+  if (motors->stepper0()) motors->stepper0()->release();
+  if (motors->stepper1()) motors->stepper1()->release();
 }
 
 void rebootIntoProgMode()
@@ -145,8 +146,12 @@ void processCommand(std::string cmdAndArgs, Settings& settings)
     if (setValFromStream(stepper, 0, 1, ss) &&
         setValFromStream(steps, -200 * 16 * 10, 200 * 16 * 10, ss))
     {
-      motors->getStepper(stepper).move(steps, 30.0f);
+      if (motors->getStepper(stepper)) motors->getStepper(stepper)->move(steps, moveRpm);
     }
+  }
+  else if (cmd == "rpm")
+  {
+    setValFromStream(moveRpm, 0.1f, 3000.0f, ss);
   }
   else if (cmd == "movedeg")
   {
@@ -155,7 +160,7 @@ void processCommand(std::string cmdAndArgs, Settings& settings)
     if (setValFromStream(stepper, 0, 1, ss) &&
         setValFromStream(deg, -360.0f * 10.0f, 360.0f * 10.0f, ss))
     {
-      motors->getStepper(stepper).moveDegrees(deg, 50.0f);
+      if (motors->getStepper(stepper)) motors->getStepper(stepper)->moveDegrees(deg, moveRpm);
     }
   }
   else if (cmd == "power")
@@ -165,7 +170,7 @@ void processCommand(std::string cmdAndArgs, Settings& settings)
     if (setValFromStream(stepper, 0, 1, ss) &&
         setValFromStream(power, 0.0f, 1.0f, ss))
     {
-      motors->getStepper(stepper).setPower(power);
+      if (motors->getStepper(stepper)) motors->getStepper(stepper)->setPower(power);
     }
   }
   else if (cmd == "mode")
@@ -174,7 +179,7 @@ void processCommand(std::string cmdAndArgs, Settings& settings)
     if (setValFromStream(stepper, 0, 1, ss) &&
         setValFromStream(mode, 0, 2, ss))
     {
-      motors->getStepper(stepper).setMode((Stepper::Mode)mode);
+      if (motors->getStepper(stepper)) motors->getStepper(stepper)->setMode((Stepper::Mode)mode);
     }
   }
   else if (cmd == "release")
@@ -182,8 +187,12 @@ void processCommand(std::string cmdAndArgs, Settings& settings)
     int stepper;
     if (setValFromStream(stepper, 0, 1, ss))
     {
-      motors->getStepper(stepper).release();
+      if (motors->getStepper(stepper)) motors->getStepper(stepper)->release();
     }
+  }
+  else if (cmd == "releaseall")
+  {
+    releaseSteppers();
   }
   else
   {
@@ -241,8 +250,18 @@ int main()
   Settings& settings = settingsMgr.getSettings();
 
   // Init the i2c bus and steppers
-  I2CInterface i2c(i2c0, 0, 1, 400000);
+  // The docs for the motorkit hat say it supports up to
+  // 400k baud but we can probably get a little more from it...
+  // 600k seems stable and fine
+  I2CInterface i2c(i2c0, 0, 1, 600000);
   motors = std::make_unique<MotorKit>(i2c);
+
+  // Connect some NEMA-17 steppers with:
+  //    200 steps per rev
+  //    8 microsteps
+  //    230 rpm max speed
+  motors->connectStepper(0, {200, 8, 230});
+  motors->connectStepper(1, {200, 8, 230});
   
   absolute_time_t nextFrameTime = get_absolute_time();
 

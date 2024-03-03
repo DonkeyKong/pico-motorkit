@@ -2,6 +2,78 @@
 
 #include <chrono>
 
+// Information about the stepper motors being connected
+struct StepperMotorInfo
+{
+  static const uint64_t MicrosecondsPerMinute = (1000000 * 60);
+  static const int StepsPerCycle = 4; // This is true of all supported steppers
+  static const int DegPerRev = 360.0f;
+
+StepperMotorInfo()
+    : Valid {false}
+    , StepsPerRev {0}
+    , MicrostepsPerStep {0}
+    , MicrostepsPerCycle {0}
+    , StepsPerDegree {0}
+    , MicrostepsPerRev {0}
+    , MicrostepsPerDegree {0}
+    , MaxRpm {0}
+    , MinimumUsPerStep {0}
+  { }
+
+  StepperMotorInfo(int stepsPerRev, int microsteps, float maxRpm)
+    : Valid {true}
+    , StepsPerRev {stepsPerRev}
+    , MicrostepsPerStep {microsteps}
+    , MicrostepsPerCycle {MicrostepsPerStep * StepsPerCycle}
+    , StepsPerDegree {(float)StepsPerRev / DegPerRev}
+    , MicrostepsPerRev {StepsPerRev * MicrostepsPerStep}
+    , MicrostepsPerDegree {(float)MicrostepsPerRev / DegPerRev}
+    , MaxRpm {maxRpm}
+    , MinimumUsPerStep { usPerStepFromRpm(MaxRpm) }
+  { }
+
+  const bool Valid;
+  const int StepsPerRev;
+  const int MicrostepsPerStep;
+  const int MicrostepsPerCycle;
+  const float StepsPerDegree;
+  const int MicrostepsPerRev;
+  const float MicrostepsPerDegree;
+  const float MaxRpm;
+  const uint64_t MinimumUsPerStep;
+
+  int ustepsFromDegrees(float deg) const
+  {
+    return (int)(deg * MicrostepsPerDegree);
+  }
+
+  int stepsFromDegrees(float deg) const
+  {
+    return (int)(deg * StepsPerDegree);
+  }
+
+  double rpmFromUsPerStep(uint64_t usPerStep) const
+  {
+    return (double)MicrosecondsPerMinute / ((double)StepsPerRev * (double)usPerStep);
+  }
+
+  double rpmFromUsPerUstep(uint64_t usPerUstep) const
+  {
+    return (double)MicrosecondsPerMinute / ((double)MicrostepsPerRev * (double)usPerUstep);
+  }
+
+  uint64_t usPerStepFromRpm(double rpm) const
+  {
+    return (uint64_t)((double)MicrosecondsPerMinute / rpm / (double)StepsPerRev);
+  }
+
+  uint64_t usPerUstepFromRpm(double rpm) const
+  {
+    return (uint64_t)((double)MicrosecondsPerMinute / rpm / (double)MicrostepsPerRev);
+  }
+};
+
 class Stepper
 {
 public:
@@ -16,7 +88,7 @@ public:
   {
     Single = 0,
     Double = 1,
-    Continuous = 2
+    Microstep = 2
   };
 
   virtual ~Stepper() = default;
@@ -27,13 +99,18 @@ public:
   // Returns false if this is not possible
   virtual bool move(int delta, std::chrono::microseconds time) = 0;
 
-  // Move the stepper by delta microsteps at the RPM
+  // Move the stepper by delta microsteps at the specified RPM
   // Returns false if this is not possible
-  virtual bool move(int delta, float rpm = 50) = 0;
-
-  virtual bool moveDegrees(float deg, float rpm = 50)
+  bool move(int delta, float rpm = 50)
   {
-    return move(microstepsFromDegrees(deg), rpm);
+    return move(delta, std::chrono::microseconds(motorInfo.usPerUstepFromRpm(rpm) * std::abs(delta)));
+  }
+
+  // Move the stepper by the specified number of degrees at the specified RPM
+  // Returns false if this is not possible
+  bool moveDegrees(float deg, float rpm = 50)
+  {
+    return move(motorInfo.ustepsFromDegrees(deg), rpm);
   }
 
   // Snap the motor to the nearest whole step
@@ -54,11 +131,10 @@ public:
   // Set whether the motor should single, double, or continuously step
   virtual void setMode(Mode steppingMode) = 0;
 
-protected:
-  Stepper() = default;
+  const StepperMotorInfo motorInfo;
 
-  // For convenience not serious use!
-  virtual int microstepsFromDegrees(float deg) = 0;
+protected:
+  Stepper(StepperMotorInfo motorInfo) : motorInfo{motorInfo} {}
 };
 
 // class Motion

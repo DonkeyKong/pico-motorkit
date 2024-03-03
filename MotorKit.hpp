@@ -15,9 +15,12 @@ public:
   MotorKit(MotorKit&&) = delete;
   ~MotorKit() = default;
 
-  Stepper& getStepper(int id);
-  Stepper& stepper0();
-  Stepper& stepper1();
+  bool connectStepper(int id, StepperMotorInfo info);
+  void disconnectStepper(int id);
+
+  Stepper* getStepper(int id);
+  Stepper* stepper0();
+  Stepper* stepper1();
 
 private:
   // Chip function registers

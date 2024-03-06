@@ -72,6 +72,12 @@ StepperMotorInfo()
   {
     return (uint64_t)((double)MicrosecondsPerMinute / rpm / (double)MicrostepsPerRev);
   }
+
+  int8_t normalizeStep(int8_t step) const
+  {
+    while (step < 0) step += MicrostepsPerCycle;
+    return step % MicrostepsPerCycle;
+  }
 };
 
 class Stepper
@@ -94,6 +100,9 @@ public:
   virtual ~Stepper() = default;
   Stepper(const Stepper&) = delete;
   Stepper(Stepper&&) = delete;
+
+  // Check if a move would be valid based on speed
+  virtual uint64_t getUsPerUstep(int delta, std::chrono::microseconds time) = 0;
 
   // Move the stepper by delta microsteps in the specified time
   // Returns false if this is not possible
@@ -131,70 +140,16 @@ public:
   // Set whether the motor should single, double, or continuously step
   virtual void setMode(Mode steppingMode) = 0;
 
+  // Power the coils for a given step position, [0, Microsteps per cycle)
+  // Setting dir to something other than auto will allow the method to optimize
+  // the update for movement in a direction.
+  virtual void updateCoils(int8_t pos, bool forceUpdateAll = false) = 0;
+
+  // Get the last position sent to updateCoils(...)
+  virtual int8_t getLastPos() = 0;
+
   const StepperMotorInfo motorInfo;
 
 protected:
   Stepper(StepperMotorInfo motorInfo) : motorInfo{motorInfo} {}
-};
-
-// class Motion
-// {
-// public:
-//   // Run this method in a loop to complete the move
-//   // If called too quickly, it will block to throttle
-//   // steps to the correct rate.
-//   // Returns true when the move is complete
-//   virtual bool stepMove() = 0
-
-//   // Calls stepMove repeatedly until the move is complete.
-//   void completeMove()
-//   {
-//     while (!stepMove()) {}
-//   }
-// protected:
-//   Motion();
-// };
-
-class MotionXY
-{
-public:
-  MotionXY(Stepper& stepperX, Stepper& stepperY, double mmPerStepX, double mmPerStepY)
-    : stepperX_{stepperX}
-    , stepperY_{stepperY}
-    , mmPerStepX_{mmPerStepX}
-    , mmPerStepY_{mmPerStepY}
-  {}
-  
-  // Set the move destination to the specified coordinates
-  // Just schedules a move. Call stepMove or completeMove 
-  // to actually perform it.
-  void moveTo(double x, double y, double mmPerSec)
-  {
-
-  }
-
-  // Run this method in a loop to complete the move
-  // If called too quickly, it will block to throttle
-  // steps to the correct rate.
-  // Returns true when the move is complete
-  bool stepMove()
-  {
-    return false;
-  }
-
-  // Calls stepMove repeatedly until the move is complete.
-  void completeMove()
-  {
-    
-  }
-
-private:
-  Stepper& stepperX_;
-  Stepper& stepperY_;
-  double mmPerStepX_;
-  double mmPerStepY_;
-  double x_;
-  double y_;
-  double targetX_;
-  double targetY_;
 };

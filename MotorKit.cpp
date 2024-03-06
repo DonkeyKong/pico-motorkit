@@ -48,6 +48,65 @@ void setDutyCycle(uint16_t dutyCycle, T&... reg)
 }
 }
 
+class MotorKitDC : public DCMotor
+{
+public:
+  MotorKitDC(
+    I2CRegister<uint16_t, uint16_t>& power, 
+    I2CRegister<uint16_t, uint16_t>& forward, 
+    I2CRegister<uint16_t, uint16_t>& backward) :
+    power_{power},
+    forward_{forward},
+    backward_{backward},
+    powered_{false}
+  { }
+
+  ~MotorKitDC()
+  {
+    powerOff();
+  }
+
+  // Set the motor power as a float -1 to 1
+  void setSpeed(float power) override
+  {
+    if (!powered_)
+    {
+      powerOn();
+    }
+    if (power < 0.0f)
+    {
+      setDutyCycle(false, forward_);
+      setDutyCycle(std::abs(power), backward_);
+    }
+    else if (power > 0.0f)
+    {
+      setDutyCycle(false, backward_);
+      setDutyCycle(std::abs(power), forward_);
+    }
+    else
+    {
+      setDutyCycle(false, backward_, forward_);
+    }
+  }
+
+  void powerOn()
+  {
+    powered_ = true;
+    setDutyCycle(true, power_);
+  }
+
+  void powerOff()
+  {
+    powered_ = false;
+    setDutyCycle(false, power_);
+  }
+private:
+  bool powered_;
+  I2CRegister<uint16_t, uint16_t>& power_;
+  I2CRegister<uint16_t, uint16_t>& forward_;
+  I2CRegister<uint16_t, uint16_t>& backward_;
+};
+
 class MotorKitStepper : public Stepper
 {
 public:
@@ -90,12 +149,6 @@ public:
     release();
   }
 
-  int8_t normalizeStep(int8_t step)
-  {
-    while (step < 0) step += motorInfo.MicrostepsPerCycle;
-    return step % motorInfo.MicrostepsPerCycle;
-  }
-
   int8_t snap(Direction dir) override
   {
     int8_t localMicrostep = lastMicrostep_ % motorInfo.MicrostepsPerStep;
@@ -111,16 +164,25 @@ public:
         correction =  -((int8_t)localMicrostep);
       }
     }
-    lastMicrostep_ = normalizeStep(lastMicrostep_ + correction);
-    updateCoils();
+    updateCoils(motorInfo.normalizeStep(lastMicrostep_ + correction), true);
     return correction;
+  }
+
+  uint64_t getUsPerUstep(int delta, std::chrono::microseconds time) override
+  {
+    uint64_t usPerMicrostepReq = time.count() / std::abs(delta);
+    if (usPerMicrostepReq >= (motorInfo.MinimumUsPerStep / motorInfo.MicrostepsPerStep))
+    {
+      return usPerMicrostepReq;
+    }
+    return 0;
   }
 
   bool move(int delta, std::chrono::microseconds time) override
   {
-    uint64_t usPerMicrostepReq = time.count() / std::abs(delta);
+    uint64_t usPerMicrostepReq = getUsPerUstep(delta, time);
 
-    if (usPerMicrostepReq < (motorInfo.MinimumUsPerStep / motorInfo.MicrostepsPerStep))
+    if (usPerMicrostepReq == 0)
     {
       DEBUG_LOG("Too fast movement requested! Ignoring.");
       return false;
@@ -132,28 +194,20 @@ public:
 
     int8_t moveStep = lastMicrostep_;
     absolute_time_t nextStepTime_ = make_timeout_time_us(usPerMicrostepReq);
-    Direction dir = (delta < 0) ? Direction::Backward : Direction::Forward;
-    
-    // Make sure the coils are on and powered correctly for where we think 
-    // the motor is in its step cycle.
-    updateCoils();
 
     while (delta != 0)
     {
-      if (dir == Direction::Forward)
+      if (delta > 0)
       {
         --delta;
-        ++moveStep;
+        moveStep = motorInfo.normalizeStep(moveStep+1);
       }
-      else // if (dir == Direction::Backwards)
+      else // if (delta < 0)
       {
         ++delta;
-        --moveStep;
+        moveStep = motorInfo.normalizeStep(moveStep-1);
       }
-      moveStep = normalizeStep(moveStep);
-
-      updateCoils(moveStep, dir);
-
+      updateCoils(moveStep);
       busy_wait_until(nextStepTime_);
       nextStepTime_ = delayed_by_us(nextStepTime_, usPerMicrostepReq);
     }
@@ -164,7 +218,12 @@ public:
     return true;
   }
 
-  void updateCoils(int8_t pos, Direction dir = Direction::Auto)
+  int8_t getLastPos() override
+  {
+    return lastMicrostep_;
+  }
+
+  void updateCoils(int8_t pos, bool forceUpdateAll = false) override
   {
     // Check to see that we're not trying to set an invalid coil state
     if (pos >= motorInfo.MicrostepsPerCycle || pos < 0)
@@ -174,9 +233,9 @@ public:
     }
 
     int8_t microstep = (pos % motorInfo.MicrostepsPerStep);
-    bool wholeStepTransition = (dir == Direction::Auto) ||
-                               (dir == Direction::Forward && microstep == 0) || 
-                               (dir == Direction::Backward && microstep == (motorInfo.MicrostepsPerStep-1));
+    bool wholeStepTransition = (forceUpdateAll) ||
+                               (pos == motorInfo.normalizeStep(lastMicrostep_+1) && microstep == 0) || 
+                               (pos == motorInfo.normalizeStep(lastMicrostep_-1) && microstep == (motorInfo.MicrostepsPerStep-1));
     
     // Because we might end early, set the last microstep upfront, before any changes are made
     lastMicrostep_ = pos;
@@ -246,11 +305,6 @@ public:
     setDutyCycle(powerEnd, *end);
   }
 
-  void updateCoils()
-  {
-    updateCoils(lastMicrostep_);
-  }
-
   void grab() override
   {
     setDutyCycle(true, dutyCycleA_, dutyCycleB_);
@@ -266,13 +320,13 @@ public:
   void setPower(float power) override
   {
     motorPower_ = power;
-    updateCoils();
+    updateCoils(lastMicrostep_, true);
   }
 
   void setMode(Mode stepMode) override
   {
     stepMode_ = stepMode;
-    updateCoils();
+    updateCoils(lastMicrostep_, true);
   }
   
 private:
@@ -332,55 +386,111 @@ MotorKit::MotorKit(I2CInterface& i2c, uint8_t devAddr, double pwmFrequency)
   }
 }
 
-bool MotorKit::connectStepper(int id, StepperMotorInfo info)
+Stepper* MotorKit::connectStepper(int id, StepperMotorInfo info)
 {
-  if (id == 0 && !stepper0_)
+  constexpr int pwm[][6] 
   {
-    stepper0_ = std::make_unique<MotorKitStepper>(
-      StepperMotorInfo {200, 8, 240.0f},
-      pwmChannels_[10], 
-      pwmChannels_[9], 
-      pwmChannels_[11], 
-      pwmChannels_[12], 
-      pwmChannels_[8], 
-      pwmChannels_[13]);
-    return true;
+    {10,9,11,12,8,13},  // Stepper 0 channels
+    {4,3,5,6,7,2}       // Stepper 1 channels
+  };
+
+  // Check valid id
+  if (id < 0 || id > 2)
+  {
+    return nullptr;
   }
 
-  if (id == 1 && !stepper1_)
+  // Check stepper conflicts
+  if (steppers_[id])
   {
-    stepper1_ = std::make_unique<MotorKitStepper>(
-      StepperMotorInfo {200, 8, 240.0f},
-      pwmChannels_[4], 
-      pwmChannels_[3], 
-      pwmChannels_[5], 
-      pwmChannels_[6], 
-      pwmChannels_[7], 
-      pwmChannels_[2]);
-    return true;
+    return nullptr;
   }
 
-  return false;
+  // Check DC motor conflicts
+  if (dcs_[id * 2] || dcs_[id * 2 + 1])
+  {
+    return nullptr;
+  }
+
+  // Make the stepper
+  steppers_[id] = std::make_unique<MotorKitStepper>(
+    info,
+    pwmChannels_[pwm[id][0]], 
+    pwmChannels_[pwm[id][1]], 
+    pwmChannels_[pwm[id][2]], 
+    pwmChannels_[pwm[id][3]], 
+    pwmChannels_[pwm[id][4]], 
+    pwmChannels_[pwm[id][5]]);
+  return steppers_[id].get();
 }
 
 void MotorKit::disconnectStepper(int id)
 {
-  if (id == 0) stepper0_.reset();
-  if (id == 1) stepper1_.reset();
+  if (id >= 0 && id < 2 && !steppers_[id])
+  {
+    steppers_[id].reset();
+  }
 }
 
 Stepper* MotorKit::getStepper(int id)
 {
-  if (id == 0) return stepper0_.get();
-  return stepper1_.get();
+  if (id >= 0 && id < 2 && !steppers_[id])
+  {
+    return steppers_[id].get();
+  }
+  return nullptr;
 }
 
-Stepper* MotorKit::stepper0()
+DCMotor* MotorKit::connectDc(int id, StepperMotorInfo info)
 {
-  return stepper0_.get();
+  constexpr int pwm[][3] 
+  {
+    {8, 9, 10},
+    {13, 11, 12},
+    {2, 3, 4},
+    {7, 5, 6}
+  };
+
+  // Check valid id
+  if (id < 0 || id > 4)
+  {
+    return nullptr;
+  }
+
+  // Check motor conflicts
+  if (dcs_[id])
+  {
+    return nullptr;
+  }
+
+  // Look for stepper conflicts
+  int conflictingStepperId = id / 2;
+  if (steppers_[conflictingStepperId])
+  {
+    return nullptr;
+  }
+
+  // Make the DC motor
+  dcs_[id] = std::make_unique<MotorKitDC>(
+    pwmChannels_[pwm[id][0]], 
+    pwmChannels_[pwm[id][1]], 
+    pwmChannels_[pwm[id][2]]);
+  return dcs_[id].get();
 }
 
-Stepper* MotorKit::stepper1()
+void MotorKit::disconnectDc(int id)
 {
-  return stepper1_.get();
+  if (id >= 0 && id < 4 && !dcs_[id])
+  {
+    dcs_[id].reset();
+  }
+}
+
+DCMotor* MotorKit::getDc(int id)
+{
+  if (id >= 0 && id < 4 && !dcs_[id])
+  {
+    return dcs_[id].get();
+  }
+  return nullptr;
 }

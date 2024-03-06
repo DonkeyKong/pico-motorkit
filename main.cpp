@@ -3,6 +3,7 @@
 #include "Settings.hpp"
 #include "I2CInterface.hpp"
 #include "MotorKit.hpp"
+#include "MotionXY.hpp"
 #include "Logging.hpp"
 
 #include <hardware/watchdog.h>
@@ -26,8 +27,8 @@ float moveRpm = 120.0f;
 
 void releaseSteppers()
 {
-  if (motors->stepper0()) motors->stepper0()->release();
-  if (motors->stepper1()) motors->stepper1()->release();
+  if (motors->getStepper(0)) motors->getStepper(0)->release();
+  if (motors->getStepper(1)) motors->getStepper(1)->release();
 }
 
 void rebootIntoProgMode()

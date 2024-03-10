@@ -20,10 +20,20 @@
 
 using namespace std::chrono_literals;
 
-//GPIOButton button(3);
+GPIOButton limitSwitchX(2);
+GPIOButton limitSwitchY(3);
 //DiscreteOut outputLine(4);
 std::unique_ptr<MotorKit> motors;
+std::unique_ptr<Stage2D> stage;
 float moveRpm = 120.0f;
+double moveMmPerSec = 40.0;
+
+template <typename T>
+inline bool between(T val, T bound1, T bound2)
+{
+  if (bound1 > bound2) return val >= bound2 && val <= bound1;
+  return val >= bound1 && val <= bound2;
+}
 
 void releaseSteppers()
 {
@@ -38,6 +48,17 @@ void rebootIntoProgMode()
   reset_usb_boot(0,0);
 }
 
+void circleMove()
+{
+  double centerX = stage->sizeX / 2.0;
+  double centerY = stage->sizeY / 2.0;
+  double radius = std::min(centerX, centerY);
+  for (double theta = 0; theta < 6.28; theta += 0.1)
+  {
+    stage->moveTo(radius * std::cos(theta) + centerX, radius * -std::sin(theta) + centerY, moveMmPerSec);
+  }
+}
+
 template <typename T>
 bool setValFromStream(T& val, T min, T max, std::istream& s)
 {
@@ -48,7 +69,7 @@ bool setValFromStream(T& val, T min, T max, std::istream& s)
     std::cout << "parse error" << std::endl << std::flush;
     return false;
   }
-  if (input < min || input > max)
+  if (!between(input, min, max))
   {
     std::cout << "value out of range error" << std::endl << std::flush;
     return false;
@@ -140,6 +161,89 @@ void processCommand(std::string cmdAndArgs, Settings& settings)
     // Reboot into programming mode
     std::cout << "ok" << std::endl << std::flush;
     rebootIntoProgMode();
+  }
+  else if (cmd == "stage")
+  {
+    std::string stagecmd;
+    ss >> stagecmd;
+    if (stagecmd == "home")
+    {
+      std::cout << "Homing the stage..." << std::endl;
+      bool homed = stage->home();
+      if (!homed) std::cout << "Homing failed!" << std::endl;
+    }
+    else if (stagecmd == "fhome")
+    {
+      int64_t u, v;
+      if (setValFromStream(u, 0ll, INT64_MAX, ss) &&
+          setValFromStream(v, 0ll, INT64_MAX, ss))
+      {
+        stage->forceHomed(u, v);
+      }
+    }
+    else if (stagecmd == "speed")
+    {
+      setValFromStream(moveMmPerSec, 0.1, 1000.0, ss);
+    }
+    else if (stagecmd == "move")
+    {
+      double x, y;
+      if (setValFromStream(x, 0.0, stage->sizeX, ss) &&
+          setValFromStream(y, 0.0, stage->sizeY, ss))
+      {
+        stage->stop();
+        stage->moveTo(x, y, moveMmPerSec);
+        stage->completeAllMoves();
+      }
+    }
+    else if (stagecmd == "circle")
+    {
+      int count;
+      if (setValFromStream(count, 1, 60, ss))
+      {
+        stage->stop();
+        for (int i = 0; i < count; ++i) circleMove();
+        stage->completeAllMoves();
+      }
+    }
+    else if (stagecmd == "rel")
+    {
+      double x, y;
+      if (setValFromStream(x, -stage->sizeX, stage->sizeX, ss) &&
+          setValFromStream(y, -stage->sizeY, stage->sizeY, ss))
+      {
+        stage->stop();
+        stage->moveRel(x, y, moveMmPerSec);
+        stage->completeAllMoves();
+      }
+    }
+    else if (stagecmd == "qmove")
+    {
+      double x, y;
+      if (setValFromStream(x, 0.0, stage->sizeX, ss) &&
+          setValFromStream(y, 0.0, stage->sizeY, ss))
+      {
+        stage->moveTo(x, y, moveMmPerSec);
+      }
+    }
+    else if (stagecmd == "qrel")
+    {
+      double x, y;
+      if (setValFromStream(x, -stage->sizeX, stage->sizeX, ss) &&
+          setValFromStream(y, -stage->sizeY, stage->sizeY, ss))
+      {
+        stage->moveRel(x, y, moveMmPerSec);
+      }
+    }
+    else if (stagecmd == "go")
+    {
+      stage->completeAllMoves();
+    }
+    else
+    {
+      std::cout << "unknown stage command error" << std::endl << std::flush;
+      return;
+    }
   }
   else if (cmd == "move")
   {
@@ -239,12 +343,9 @@ int main()
   // Configure stdio
   stdio_init_all();
 
-  DEBUG_LOG("Initialized stdio");
-
-  // Wait 1 second for remote terminals to connect
-  // before doing anything.
-  sleep_ms(1000);
-  DEBUG_LOG("Slept 1000ms to wait for console attach");
+  #ifdef LOGGING_ENABLED
+  sleep_ms(2000);
+  #endif
 
   // Init the settings object
   SettingsManager settingsMgr;
@@ -261,9 +362,27 @@ int main()
   //    200 steps per rev
   //    8 microsteps
   //    230 rpm max speed
-  motors->connectStepper(0, {200, 8, 230});
-  motors->connectStepper(1, {200, 8, 230});
+  motors->connectStepper(0, {200, 8, 230, true});
+  motors->connectStepper(1, {200, 8, 230, true});
+
+  motors->getStepper(0)->setMode(Stepper::Mode::Microstep);
+  motors->getStepper(1)->setMode(Stepper::Mode::Microstep);
   
+  stage = std::make_unique<StageCoreXY>(
+    *motors->getStepper(0), *motors->getStepper(1), 
+    limitSwitchX, limitSwitchY, 
+    75.0, 340.0, 
+    2.0, 3.0, 25.0,
+    // GT2 pulleys seem to be 40 mm per revolution
+    (double)motors->getStepper(0)->motorInfo.StepsPerRev / 40.0, 
+    (double)motors->getStepper(1)->motorInfo.StepsPerRev / 40.0
+  );
+
+  // Set the stage to release steppers after completing a move sequence
+  stage->setMode(Stage2D::StageMoveMode::Release);
+
+  DEBUG_LOG("Created stage of size ( " << stage->sizeX << " , " << stage->sizeY << " ) mm");
+
   absolute_time_t nextFrameTime = get_absolute_time();
 
   while (1)
@@ -271,6 +390,15 @@ int main()
     // Regulate loop speed
     sleep_until(nextFrameTime);
     nextFrameTime = make_timeout_time_ms(50);
+
+    limitSwitchX.update();
+    limitSwitchY.update();
+
+    // Debug for limit switches
+    DEBUG_LOG_IF(limitSwitchX.buttonDown(), "Limit X pressed");
+    DEBUG_LOG_IF(limitSwitchX.buttonUp(), "Limit X released");
+    DEBUG_LOG_IF(limitSwitchY.buttonDown(), "Limit Y pressed");
+    DEBUG_LOG_IF(limitSwitchY.buttonUp(), "Limit Y released");
 
     // Process input
     processStdIo(settings);

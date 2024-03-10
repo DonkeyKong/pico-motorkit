@@ -5,118 +5,150 @@
 #include <cmath>
 #include <deque>
 
-class MotionXY
+
+
+class Stage2D
 {
-  struct MoveXY
+  template <typename T>
+  inline T dist(T dX, T dY)
   {
-    Stepper& stepperU;
-    Stepper& stepperV;
-    int64_t& u;
-    int64_t& v;
-    int64_t endU;
-    int64_t endV;
-    uint64_t usPerUstepU;
-    uint64_t usPerUstepV;
+    return std::sqrt(std::pow(dX, (T)2) + std::pow(dY, (T)2));
+  }
+
+  template <typename T>
+  inline bool between(T val, T bound1, T bound2)
+  {
+    if (bound1 > bound2) return val >= bound2 && val <= bound1;
+    return val >= bound1 && val <= bound2;
+  }
+
+  struct Move2Axis
+  {
+    Stepper& stepperS;
+    Stepper& stepperT;
+    int64_t& s;
+    int64_t& t;
+    int64_t endS;
+    int64_t endT;
+    int64_t usPerUstepS;
+    int64_t usPerUstepT;
     absolute_time_t nextStepTime;
-    uint64_t accumV{0};
+    double moveTimeSeconds{0}; // informational only
+    uint64_t accumT{0};
+    bool firstStep{true};
 
     bool stepMove()
     {
       // Figure out which stepper to step
       busy_wait_until(nextStepTime);
-      accumV += usPerUstepU;
-      if (endU != u)
+      accumT += usPerUstepS;
+      if (endS != s)
       {
-        int8_t dir = endU > u ? 1 : -1;
-        int8_t pos = stepperU.motorInfo.normalizeStep(stepperU.getLastPos() + dir);
-        stepperU.updateCoils(pos);
-        u += dir;
+        int8_t dir = endS > s ? 1 : -1;
+        int8_t pos = stepperS.motorInfo.normalizeStep(stepperS.getLastPos() + dir);
+        stepperS.updateCoils(pos, firstStep);
+        s += dir;
       }
-      if (endV != v && accumV >= usPerUstepV)
+      if (endT != t && accumT >= usPerUstepT)
       {
-        int8_t dir = endV > v ? 1 : -1;
-        int8_t pos = stepperV.motorInfo.normalizeStep(stepperV.getLastPos() + dir);
-        stepperV.updateCoils(pos);
-        v += dir;
-        accumV -= usPerUstepV;
+        int8_t dir = endT > t ? 1 : -1;
+        int8_t pos = stepperT.motorInfo.normalizeStep(stepperT.getLastPos() + dir);
+        stepperT.updateCoils(pos, firstStep);
+        t += dir;
+        accumT -= usPerUstepT;
       }
-      nextStepTime = delayed_by_us(nextStepTime, usPerUstepU);
+      else if (firstStep)
+      {
+        stepperT.updateCoils(stepperT.getLastPos(), true);
+      }
+      firstStep = false;
+      nextStepTime = delayed_by_us(nextStepTime, usPerUstepS);
 
-      return (endU == u && endV == v);
+      return (endS == s && endT == t);
     }
   };
 public:
-  MotionXY( Stepper& stepperX, Stepper& stepperY, 
-            Button& limX, Button& limY, 
-            double stepsPerMmX, double stepsPerMmY,
-            double homeOffsetX, double homeOffsetY, double homeSpeedMmPerSec,
-            double sizeMmX, double sizeMmY)
-    : stepperX_{stepperX}
-    , stepperY_{stepperY}
-    , limX_{limX}
-    , limY_{limY}
-    , homeOffsetX_{homeOffsetX}
-    , homeOffsetY_{homeOffsetY}
-    , homeSpeedMmPerSec_ {homeSpeedMmPerSec}
-    , stepsPerMmX_{stepsPerMmX}
-    , stepsPerMmY_{stepsPerMmY}
-    , x_{0}
-    , y_{0}
-    , sizeMmX_{sizeMmX}
-    , sizeMmY_{sizeMmY}
-    , sizeUstepX_{(uint64_t)(sizeMmX_ * stepsPerMmX_ * stepperX_.motorInfo.MicrostepsPerStep)}
-    , sizeUstepY_{(uint64_t)(sizeMmY_ * stepsPerMmY_ * stepperY_.motorInfo.MicrostepsPerStep)}
-    , homed_{false}
-  {}
 
-  double getMmFromUstepsX(int64_t x)
+  enum class StageMoveMode
   {
-    return (double)x / stepsPerMmX_ / (double)stepperX_.motorInfo.MicrostepsPerStep;
+    Hold,
+    Release
+  };
+
+  Stage2D(Stepper& stepperU, Stepper& stepperV, 
+          Button& limX, Button& limY,
+          double sizeX, double sizeY,
+          double homeOffsetX, double homeOffsetY, double homeSpeedMmPerSec)
+    : stepperU_{stepperU}, stepperV_{stepperV}
+    , limX_{limX}, limY_{limY}
+    , sizeX{sizeX}, sizeY{sizeY}
+    , homeOffsetX_{homeOffsetX}, homeOffsetY_{homeOffsetY}, homeSpeedMmPerSec_ {homeSpeedMmPerSec}
+    , u_{0}, v_{0}, homed_{false}
+  {
   }
 
-  double getMmFromUstepsY(int64_t y)
+  void setMode(StageMoveMode mode)
   {
-    return (double)y / stepsPerMmY_ / (double)stepperY_.motorInfo.MicrostepsPerStep;
+    mode_ = mode;
   }
 
-  double getLastQueuedPosX()
+  void forceHomed(int64_t u = 0, int64_t v = 0)
+  {
+    u_ = u;
+    v_ = v;
+    homed_ = true;
+  }
+
+  int64_t getLastQueuedPosU()
   {
     if (queuedMoves_.empty())
     {
-      return x_;
+      return u_;
     }
     auto& lastMove = queuedMoves_.at(queuedMoves_.size()-1);
-    if (&lastMove.stepperU == &stepperX_)
+    if (&lastMove.stepperS == &stepperU_)
     {
-      return lastMove.endU;
+      return lastMove.endS;
     }
     else
     {
-      return lastMove.endV;
+      return lastMove.endT;
     }
   }
 
-  double getLastQueuedPosY()
+  int64_t getLastQueuedPosV()
   {
     if (queuedMoves_.empty())
     {
-      return y_;
+      return v_;
     }
     auto& lastMove = queuedMoves_.at(queuedMoves_.size()-1);
-    if (&lastMove.stepperU == &stepperX_)
+    if (&lastMove.stepperS == &stepperU_)
     {
-      return lastMove.endV;
+      return lastMove.endT;
     }
     else
     {
-      return lastMove.endU;
+      return lastMove.endS;
     }
+  }
+
+  // Set the move destination to the specified relative coordinates
+  // The coordinates are relative to the stage position or last 
+  // scheduled move end position if any exist.
+  // Just schedules a move. Call stepMove or completeAllMoves
+  // to actually perform it.
+  bool moveRel(double x, double y, double mmPerSec)
+  {
+    double startX, startY;
+    xyFromUv(startX, startY, getLastQueuedPosU(), getLastQueuedPosV());
+    return moveTo(startX + x, startY + y, mmPerSec);
   }
   
   // Set the move destination to the specified coordinates
-  // Just schedules a move. Call stepMove or completeMove 
+  // Just schedules a move. Call stepMove or completeAllMoves
   // to actually perform it.
-  bool moveTo(double xMm, double yMm, double mmPerSec)
+  bool moveTo(double x, double y, double mmPerSec)
   {
     if (!homed_)
     {
@@ -125,61 +157,70 @@ public:
     }
 
     // Get the final position in steps and bounds check it
-    int64_t endX = (int64_t)(stepsPerMmX_ * xMm * stepperX_.motorInfo.MicrostepsPerStep);
-    int64_t endY = (int64_t)(stepsPerMmY_ * yMm * stepperY_.motorInfo.MicrostepsPerStep);
-    if (endX < 0 || endX >= sizeUstepX_ || endY < 0 || endY >= sizeUstepY_)
+    int64_t endU, endV;
+    uvFromXy(endU, endV, x, y);
+    
+    if (!between(x, 0.0, sizeX) || !between(y, 0.0, sizeY))
     {
+      DEBUG_LOG("Move out of bounds requested, ignoring.");
+      DEBUG_LOG("    End Pos: ( " << x << " , " << y << " ) mm");
+      DEBUG_LOG("    Size : ( " << sizeX << " , " << sizeY << " ) mm");
       DEBUG_LOG("Move out of bounds requested, ignoring.");
       return false;
     }
 
     // Calculate the desired move time
-    int64_t dX = endX - getLastQueuedPosX();
-    int64_t dY = endY - getLastQueuedPosY();
-    double dXMm = getMmFromUstepsX(dX);
-    double dYMm = getMmFromUstepsY(dY);
-    double distMm = std::sqrt(std::pow(dXMm, 2.0) + std::pow(dYMm, 2.0));
-    uint64_t moveTimeUs = (uint64_t)(distMm / mmPerSec / 1000000.0);
+    int64_t dU = endU - getLastQueuedPosU();
+    int64_t dV = endV - getLastQueuedPosV();
+    double dX, dY;
+    xyFromUv(dX, dY, dU, dV);
+    double distMm = dist(dX, dY);
+    uint64_t moveTimeUs = (uint64_t)(distMm / mmPerSec * 1000000.0);
+    DEBUG_LOG("Requested move to UV pos ( " << endU << " , " << endV << " ) in " << (distMm / mmPerSec) << " sec");
 
     // Get the requested speed of each axis and make sure it's not too fast
-    uint64_t usPerUstepX = stepperX_.getUsPerUstep(dX, std::chrono::microseconds(moveTimeUs));
-    uint64_t usPerUstepY = stepperY_.getUsPerUstep(dY, std::chrono::microseconds(moveTimeUs));
-    if (usPerUstepX == 0 || usPerUstepY == 0)
+    int64_t usPerUstepU = stepperU_.getUsPerUstep(dU, std::chrono::microseconds(moveTimeUs));
+    int64_t usPerUstepV = stepperV_.getUsPerUstep(dV, std::chrono::microseconds(moveTimeUs));
+    if (usPerUstepU == 0 || usPerUstepV == 0)
     {
       DEBUG_LOG("Too fast movement requested! Ignoring.");
       return false;
     }
 
+    bool primaryAxisU = (usPerUstepV == -1 || usPerUstepU < usPerUstepV);
+
     // Push this move on to the stack and return true
     // to indicate it has been sucessfully enqueued
-    if (usPerUstepX < usPerUstepY)
+    if (primaryAxisU)
     {
       queuedMoves_.push_back(
       {
-        .stepperU = stepperX_,
-        .stepperV = stepperY_,
-        .u = x_,
-        .v = y_,
-        .endU = endX,
-        .endV = endY,
-        .usPerUstepU = usPerUstepX,
-        .usPerUstepV = usPerUstepY,
-        .nextStepTime = get_absolute_time()
+        .stepperS = stepperU_,
+        .stepperT = stepperV_,
+        .s = u_,
+        .t = v_,
+        .endS = endU,
+        .endT = endV,
+        .usPerUstepS = usPerUstepU,
+        .usPerUstepT = usPerUstepV,
+        .nextStepTime = get_absolute_time(),
+        .moveTimeSeconds = (distMm / mmPerSec)
       });
     }
     else
     {
       queuedMoves_.push_back(
       {
-        .stepperU = stepperY_,
-        .stepperV = stepperX_,
-        .u = y_,
-        .v = x_,
-        .endU = endY,
-        .endV = endX,
-        .usPerUstepU = usPerUstepY,
-        .usPerUstepV = usPerUstepX,
-        .nextStepTime = get_absolute_time()
+        .stepperS = stepperV_,
+        .stepperT = stepperU_,
+        .s = v_,
+        .t = u_,
+        .endS = endV,
+        .endT = endU,
+        .usPerUstepS = usPerUstepV,
+        .usPerUstepT = usPerUstepU,
+        .nextStepTime = get_absolute_time(),
+        .moveTimeSeconds = (distMm / mmPerSec)
       });
     }
     return true;
@@ -198,115 +239,236 @@ public:
     {
       queuedMoves_.pop_front();
     }
+    if (queuedMoves_.empty() && mode_ == StageMoveMode::Release)
+    {
+      releaseSteppers();
+    }
     return queuedMoves_.empty();
   }
 
   // Calls stepMove repeatedly until the current move is complete.
   void completeAllMoves()
   {
+    uint64_t usteps = 0;
+    double totalEstTime = 0;
+    for (auto& move : queuedMoves_)
+    {
+      totalEstTime += move.moveTimeSeconds;
+    }
+    DEBUG_LOG("Queued moves should take " <<  totalEstTime << " sec");
+    auto startTime = get_absolute_time();
+
     while (!stepMove())
     {
-      tight_loop_contents();
+      ++usteps;
     }
+
+    int64_t elapsedTimeUs = absolute_time_diff_us(startTime, get_absolute_time());
+    DEBUG_LOG("Completed " << usteps << " usteps in " <<  (double)elapsedTimeUs / 1000000.0 << " sec");
   }
 
   void stop()
   {
     queuedMoves_.clear();
+    if (mode_ == StageMoveMode::Release) releaseSteppers();
   }
 
-  // Performs a homing process
+  //Performs a homing process
   bool home()
   {
     stop();
-    homed_ =  homeAxis(stepperX_, limX_,  stepsPerMmX_, homeOffsetX_, sizeMmX_) &&
-              homeAxis(stepperY_, limY_,  stepsPerMmY_, homeOffsetY_, sizeMmY_);
+    homed_ =  homeAxis(1, 0, limX_) &&
+              homeAxis(0, 1, limY_);
+    moveTo(homeOffsetX_, homeOffsetY_, homeSpeedMmPerSec_);
+    completeAllMoves();
+    u_ = 0;
+    v_ = 0;
     return homed_;
   }
 
-private:
-  static constexpr double MaxBackoffSteps = 20.0;
-  bool homeAxis(Stepper& stepper, Button& lim, double stepsPerMm, double homeOffset, double sizeMm)
+  void releaseSteppers()
   {
-    // Figure out how many us between microsteps for homing
-    uint64_t usPerMicrostep =  (uint64_t)(1000000.0 / (homeSpeedMmPerSec_ * stepsPerMm * (double)stepper.motorInfo.MicrostepsPerStep));
-    DEBUG_LOG("Home operation started: speed is " << usPerMicrostep << " us per ustep");
+    stepperU_.release();
+    stepperV_.release();
+  }
 
-    // Setup some movement vars
-    int8_t ustep = stepper.getLastPos();
-    absolute_time_t nextStepTime = make_timeout_time_us(usPerMicrostep);
-    uint64_t stepsRemaining;
+protected:
 
-    // Move the stepper backwards until the limit switch is pressed
-    stepsRemaining = (uint64_t) (sizeMm * 1.2 * stepsPerMm * stepper.motorInfo.MicrostepsPerStep);
-    while (!lim.pressed() && stepsRemaining > 0)
+  virtual void xyFromUv(double& x, double& y, int64_t u, int64_t v) = 0;
+  virtual void uvFromXy(int64_t& u, int64_t& v, double x, double y) = 0;
+
+  static constexpr int BackoffSteps = 128;
+  bool homeAxis(double xCoeff, double yCoeff, Button& lim)
+  {
+    // The homing movement is the [size of the stage] * -1.2
+    double endX = xCoeff * sizeX * -1.2;
+    double endY = yCoeff * sizeY * -1.2;
+    int64_t endU, endV;
+    uvFromXy(endU, endV, endX, endY);
+    double endTimeUs = dist(endX, endY) / homeSpeedMmPerSec_ * 1000000.0;
+    
+    int64_t usPerUstepU = stepperU_.getUsPerUstep(endU, std::chrono::microseconds((int64_t)endTimeUs));
+    int64_t usPerUstepV = stepperV_.getUsPerUstep(endV, std::chrono::microseconds((int64_t)endTimeUs));
+    if (usPerUstepU == 0 || usPerUstepV == 0)
     {
-      --stepsRemaining;
-      ustep = stepper.motorInfo.normalizeStep(ustep - 1);
-      stepper.updateCoils(ustep);
-      busy_wait_until(nextStepTime);
-      nextStepTime = delayed_by_us(nextStepTime, usPerMicrostep);
+      DEBUG_LOG("Home operation failed: home seek speed too fast!");
+      return false;
     }
-    if (stepsRemaining == 0)
+    if (usPerUstepU == -1 && usPerUstepV == -1)
     {
-      // Power down the malfunctioning stepper and return false for failure
+      DEBUG_LOG("Home operation failed: no axis will move");
+      return false;
+    }
+    bool primaryAxisU = (usPerUstepV == -1 || usPerUstepU < usPerUstepV);
+
+    // Create a move for the home action
+    u_ = 0;
+    v_ = 0;
+    Move2Axis homeMove 
+    {
+      .stepperS = primaryAxisU ? stepperU_ : stepperV_,
+      .stepperT = primaryAxisU ? stepperV_ : stepperU_,
+      .s = primaryAxisU ? u_ : v_,
+      .t = primaryAxisU ? v_ : u_,
+      .endS = primaryAxisU ? endU : endV,
+      .endT = primaryAxisU ? endV : endU,
+      .usPerUstepS = primaryAxisU ? usPerUstepU : usPerUstepV,
+      .usPerUstepT = primaryAxisU ? usPerUstepV : usPerUstepU,
+      .nextStepTime = get_absolute_time(),
+      .moveTimeSeconds = dist(endX, endY) / homeSpeedMmPerSec_
+    };
+
+    DEBUG_LOG("Home operation started: speed is " << homeMove.usPerUstepS << " us per ustep (primary)");
+    lim.update();
+    while (!lim.pressed() && !homeMove.stepMove())
+    {
+      lim.update();
+    }
+    if (!lim.pressed())
+    {
       DEBUG_LOG("Home operation failed: home seek limit exceeded without triggering limit switch");
-      stepper.release();
+      releaseSteppers();
       return false;
     }
 
-    // Back off the limit switch until it's not pressed
-    stepsRemaining = (uint64_t)(MaxBackoffSteps * stepper.motorInfo.MicrostepsPerStep);
-    while (lim.pressed() && stepsRemaining > 0)
+    // Back off from the limit switch
+    u_ = 0;
+    v_ = 0;
+    homeMove.endS = -homeMove.endS;
+    homeMove.endT = -homeMove.endT;
+    homeMove.accumT = 0; // This barely matters but do it anyway
+    int stepsRemaining = BackoffSteps;
+    lim.update();
+    while (stepsRemaining > 0 && !homeMove.stepMove() && lim.pressed())
     {
       --stepsRemaining;
-      ustep = stepper.motorInfo.normalizeStep(ustep + 1);
-      stepper.updateCoils(ustep);
-      busy_wait_until(nextStepTime);
-      nextStepTime = delayed_by_us(nextStepTime, usPerMicrostep);
+      lim.update();
     }
-    if (stepsRemaining == 0)
+    if (lim.pressed())
     {
-      // Power down the malfunctioning stepper and return false for failure
       DEBUG_LOG("Home operation failed: backoff limit exceeded without releasing limit switch");
-      stepper.release();
+      releaseSteppers();
       return false;
-    }
-
-    // Execute a move to origin
-    stepsRemaining = homeOffset * stepsPerMm * stepper.motorInfo.MicrostepsPerStep;
-    while (stepsRemaining > 0)
-    {
-      --stepsRemaining;
-      ustep = stepper.motorInfo.normalizeStep(ustep + 1);
-      stepper.updateCoils(ustep);
-      busy_wait_until(nextStepTime);
-      nextStepTime = delayed_by_us(nextStepTime, usPerMicrostep);
     }
 
     // Set the internally held position to 0,0
-    x_ = 0;
-    y_ = 0;
+    u_ = 0;
+    v_ = 0;
 
     // Homed successfully!
     return true;
   }
 
-  Stepper& stepperX_;
-  Stepper& stepperY_;
+  Stepper& stepperU_;
+  Stepper& stepperV_;
   Button& limX_;
   Button& limY_;
+public:
+  const double sizeX;
+  const double sizeY;
+private:
   double homeOffsetX_;
   double homeOffsetY_;
   double homeSpeedMmPerSec_;
+  int64_t u_;
+  int64_t v_;
+  bool homed_;
+  StageMoveMode mode_ {StageMoveMode::Hold};
+  std::deque<Move2Axis> queuedMoves_;
+};
+
+class StageXY final : public Stage2D
+{
+public:
+  StageXY(Stepper& stepperU, Stepper& stepperV, 
+          Button& limX, Button& limY,
+          double sizeX, double sizeY,
+          double homeOffsetX, double homeOffsetY, double homeSpeedMmPerSec,
+          double stepsUPerMmX, double stepsVPerMmY)
+           : Stage2D(stepperU, stepperV, 
+           limX,  limY,
+           sizeX, sizeY,
+           homeOffsetX,  homeOffsetY,  homeSpeedMmPerSec),
+           stepsPerMmX_{stepsUPerMmX},
+           stepsPerMmY_{stepsVPerMmY}
+  {
+  }
+
+protected:
+
+  void xyFromUv(double& x, double& y, int64_t u, int64_t v) override
+  {
+    x = (double)u / stepsPerMmX_ / (double)stepperU_.motorInfo.MicrostepsPerStep;
+    y = (double)v / stepsPerMmY_ / (double)stepperV_.motorInfo.MicrostepsPerStep;
+  }
+
+  void uvFromXy(int64_t& u, int64_t& v, double x, double y) override
+  {
+    u = x * stepsPerMmX_ * stepperU_.motorInfo.MicrostepsPerStep;
+    v = y * stepsPerMmY_ * stepperV_.motorInfo.MicrostepsPerStep;
+  }
+
+private:
   double stepsPerMmX_;
   double stepsPerMmY_;
-  int64_t x_;
-  int64_t y_;
-  double sizeMmX_;
-  double sizeMmY_;
-  uint64_t sizeUstepX_;
-  uint64_t sizeUstepY_;
-  bool homed_;
-  std::deque<MoveXY> queuedMoves_;
+};
+
+class StageCoreXY final : public Stage2D
+{
+public:
+  StageCoreXY(Stepper& stepperU, Stepper& stepperV, 
+          Button& limX, Button& limY,
+          double sizeX, double sizeY,
+          double homeOffsetX, double homeOffsetY, double homeSpeedMmPerSec,
+          double stepsUPerMmA = 0, double stepsVPerMmB = 0) // reflects the size of generic GT2 pulleys
+           : Stage2D(stepperU, stepperV, 
+           limX,  limY,
+           sizeX, sizeY,
+           homeOffsetX,  homeOffsetY,  homeSpeedMmPerSec),
+           stepsPerMmA_{stepsUPerMmA},
+           stepsPerMmB_{stepsVPerMmB}
+  {
+  }
+
+protected:
+
+  void xyFromUv(double& x, double& y, int64_t u, int64_t v) override
+  {
+    double a = (double)u / stepsPerMmA_ / (double)stepperU_.motorInfo.MicrostepsPerStep;
+    double b = (double)v / stepsPerMmB_ / (double)stepperV_.motorInfo.MicrostepsPerStep;
+    x = 0.5 * (a + b);
+    y = 0.5 * (a - b);
+  }
+
+  void uvFromXy(int64_t& u, int64_t& v, double x, double y) override
+  {
+    double a = x + y;
+    double b = x - y;
+    u = a * stepsPerMmA_ * (double)stepperU_.motorInfo.MicrostepsPerStep;
+    v = b * stepsPerMmB_ * (double)stepperV_.motorInfo.MicrostepsPerStep;
+  }
+
+private:
+  double stepsPerMmA_;
+  double stepsPerMmB_;
 };

@@ -168,8 +168,9 @@ public:
     return correction;
   }
 
-  uint64_t getUsPerUstep(int delta, std::chrono::microseconds time) override
+  int64_t getUsPerUstep(int delta, std::chrono::microseconds time) override
   {
+    if (delta == 0) return -1;
     uint64_t usPerMicrostepReq = time.count() / std::abs(delta);
     if (usPerMicrostepReq >= (motorInfo.MinimumUsPerStep / motorInfo.MicrostepsPerStep))
     {
@@ -180,7 +181,7 @@ public:
 
   bool move(int delta, std::chrono::microseconds time) override
   {
-    uint64_t usPerMicrostepReq = getUsPerUstep(delta, time);
+    int64_t usPerMicrostepReq = getUsPerUstep(delta, time);
 
     if (usPerMicrostepReq == 0)
     {
@@ -226,11 +227,11 @@ public:
   void updateCoils(int8_t pos, bool forceUpdateAll = false) override
   {
     // Check to see that we're not trying to set an invalid coil state
-    if (pos >= motorInfo.MicrostepsPerCycle || pos < 0)
-    {
-      DEBUG_LOG("Invalid step cycle given to update coils: " << (int)pos);
-      return;
-    }
+    // if (pos >= motorInfo.MicrostepsPerCycle || pos < 0)
+    // {
+    //   DEBUG_LOG("Invalid step cycle given to update coils: " << (int)pos);
+    //   return;
+    // }
 
     int8_t microstep = (pos % motorInfo.MicrostepsPerStep);
     bool wholeStepTransition = (forceUpdateAll) ||
@@ -320,13 +321,13 @@ public:
   void setPower(float power) override
   {
     motorPower_ = power;
-    updateCoils(lastMicrostep_, true);
+    if (grabbed_) updateCoils(lastMicrostep_, true);
   }
 
   void setMode(Mode stepMode) override
   {
     stepMode_ = stepMode;
-    updateCoils(lastMicrostep_, true);
+    if (grabbed_) updateCoils(lastMicrostep_, true);
   }
   
 private:
@@ -397,31 +398,35 @@ Stepper* MotorKit::connectStepper(int id, StepperMotorInfo info)
   // Check valid id
   if (id < 0 || id > 2)
   {
+    DEBUG_LOG("Connect failure: stepper id " << id << " out of range");
     return nullptr;
   }
 
   // Check stepper conflicts
   if (steppers_[id])
   {
+    DEBUG_LOG("Connect failure: stepper id " << id << " already connected");
     return nullptr;
   }
 
   // Check DC motor conflicts
   if (dcs_[id * 2] || dcs_[id * 2 + 1])
   {
+    DEBUG_LOG("Connect failure: stepper id " << id << " conflicts with connected DC motor");
     return nullptr;
   }
 
   // Make the stepper
   steppers_[id] = std::make_unique<MotorKitStepper>(
     info,
-    pwmChannels_[pwm[id][0]], 
-    pwmChannels_[pwm[id][1]], 
+    pwmChannels_[pwm[id][info.ReverseA ? 1 : 0]], 
+    pwmChannels_[pwm[id][info.ReverseA ? 0 : 1]], 
     pwmChannels_[pwm[id][2]], 
     pwmChannels_[pwm[id][3]], 
     pwmChannels_[pwm[id][4]], 
-    pwmChannels_[pwm[id][5]]);
-  return steppers_[id].get();
+    pwmChannels_[pwm[id][5]]
+  );
+  return getStepper(id);
 }
 
 void MotorKit::disconnectStepper(int id)
@@ -430,14 +435,19 @@ void MotorKit::disconnectStepper(int id)
   {
     steppers_[id].reset();
   }
+  else
+  {
+    DEBUG_LOG("Discconet failure: stepper " << id << " does not exist!");
+  }
 }
 
 Stepper* MotorKit::getStepper(int id)
 {
-  if (id >= 0 && id < 2 && !steppers_[id])
+  if (id >= 0 && id < 2 && steppers_[id])
   {
     return steppers_[id].get();
   }
+  DEBUG_LOG("Get failure: stepper " << id << " does not exist!");
   return nullptr;
 }
 
@@ -454,12 +464,14 @@ DCMotor* MotorKit::connectDc(int id, StepperMotorInfo info)
   // Check valid id
   if (id < 0 || id > 4)
   {
+    DEBUG_LOG("Connect failure: DC motor id " << id << " out of range!");
     return nullptr;
   }
 
   // Check motor conflicts
   if (dcs_[id])
   {
+    DEBUG_LOG("Connect failure: dc motor id " << id << " already connected!");
     return nullptr;
   }
 
@@ -467,6 +479,7 @@ DCMotor* MotorKit::connectDc(int id, StepperMotorInfo info)
   int conflictingStepperId = id / 2;
   if (steppers_[conflictingStepperId])
   {
+    DEBUG_LOG("Connect failure: dc motor id " << id << " connot be constructed because a stepper is using its resources.");
     return nullptr;
   }
 
@@ -484,6 +497,10 @@ void MotorKit::disconnectDc(int id)
   {
     dcs_[id].reset();
   }
+  else
+  {
+    DEBUG_LOG("Disconnect failure: dc motor id " << id << " does not exist!");
+  }
 }
 
 DCMotor* MotorKit::getDc(int id)
@@ -492,5 +509,6 @@ DCMotor* MotorKit::getDc(int id)
   {
     return dcs_[id].get();
   }
+  DEBUG_LOG("Get failure: dc motor id " << id << " does not exist!");
   return nullptr;
 }

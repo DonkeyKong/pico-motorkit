@@ -19,9 +19,10 @@ StepperMotorInfo()
     , MicrostepsPerDegree {0}
     , MaxRpm {0}
     , MinimumUsPerStep {0}
+    , ReverseA {false}
   { }
 
-  StepperMotorInfo(int stepsPerRev, int microsteps, float maxRpm)
+  StepperMotorInfo(int stepsPerRev, int microsteps, float maxRpm, bool reverse)
     : Valid {true}
     , StepsPerRev {stepsPerRev}
     , MicrostepsPerStep {microsteps}
@@ -31,6 +32,7 @@ StepperMotorInfo()
     , MicrostepsPerDegree {(float)MicrostepsPerRev / DegPerRev}
     , MaxRpm {maxRpm}
     , MinimumUsPerStep { usPerStepFromRpm(MaxRpm) }
+    , ReverseA {reverse}
   { }
 
   const bool Valid;
@@ -42,6 +44,7 @@ StepperMotorInfo()
   const float MicrostepsPerDegree;
   const float MaxRpm;
   const uint64_t MinimumUsPerStep;
+  const bool ReverseA;
 
   int ustepsFromDegrees(float deg) const
   {
@@ -102,7 +105,7 @@ public:
   Stepper(Stepper&&) = delete;
 
   // Check if a move would be valid based on speed
-  virtual uint64_t getUsPerUstep(int delta, std::chrono::microseconds time) = 0;
+  virtual int64_t getUsPerUstep(int delta, std::chrono::microseconds time) = 0;
 
   // Move the stepper by delta microsteps in the specified time
   // Returns false if this is not possible

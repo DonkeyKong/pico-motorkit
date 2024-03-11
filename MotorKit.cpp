@@ -4,6 +4,8 @@
 #include <cmath>
 #include <memory>
 
+# define M_PI           3.14159265358979323846
+
 namespace {
 // We are driving motors using a PCA9685 LED controller
 // Below are some hardware mappings and info for this chip
@@ -138,7 +140,13 @@ public:
     for (int i=0; i < motorInfo.MicrostepsPerStep; ++i)
     {
       float t = (float)i / (float)motorInfo.MicrostepsPerStep;
-      microstepCurve_[i] = std::sqrt(1.0f-t*t);
+
+      // Using sin(x) for microstep power is conventional
+      microstepCurve_[i] = std::cos(t * M_PI / 2.0);
+      
+      // Some fun alternative functions that work worse
+      // microstepCurve_[i] = std::sqrt(1.0f-t*t);  // Upper right quadrant of a circle
+      // microstepCurve_[i] = t;  // Just plain linear interpolation
     }
 
     DEBUG_LOG("Connected stepper with max speed " << motorInfo.MinimumUsPerStep / motorInfo.MicrostepsPerStep << " per ustep (" << motorInfo.MaxRpm << " rpm)");

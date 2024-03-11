@@ -162,17 +162,69 @@ void processCommand(std::string cmdAndArgs, Settings& settings)
     std::cout << "ok" << std::endl << std::flush;
     rebootIntoProgMode();
   }
+  else if (cmd == "stepper")
+  {
+    int stepper;
+    if (setValFromStream(stepper, 0, 1, ss))
+    {
+      ss >> cmd;
+      if (cmd == "move")
+      {
+        int steps;
+        if (setValFromStream(steps, -200 * 16 * 10, 200 * 16 * 10, ss))
+        {
+          if (motors->getStepper(stepper)) motors->getStepper(stepper)->move(steps, moveRpm);
+        }
+      }
+      else if (cmd == "rpm")
+      {
+        setValFromStream(moveRpm, 0.1f, 3000.0f, ss);
+      }
+      else if (cmd == "movedeg")
+      {
+        float deg;
+        if (setValFromStream(deg, -360.0f * 10.0f, 360.0f * 10.0f, ss))
+        {
+          if (motors->getStepper(stepper)) motors->getStepper(stepper)->moveDegrees(deg, moveRpm);
+        }
+      }
+      else if (cmd == "power")
+      {
+        float power;
+        if (setValFromStream(power, 0.0f, 1.0f, ss))
+        {
+          if (motors->getStepper(stepper)) motors->getStepper(stepper)->setPower(power);
+        }
+      }
+      else if (cmd == "mode")
+      {
+        int mode;
+        if (setValFromStream(mode, 0, 2, ss))
+        {
+          if (motors->getStepper(stepper)) motors->getStepper(stepper)->setMode((Stepper::Mode)mode);
+        }
+      }
+      else if (cmd == "release")
+      {
+        if (motors->getStepper(stepper)) motors->getStepper(stepper)->release();
+      }
+      else
+      {
+        std::cout << "unknown stepper command error" << std::endl << std::flush;
+        return;
+      }
+    }
+  }
   else if (cmd == "stage")
   {
-    std::string stagecmd;
-    ss >> stagecmd;
-    if (stagecmd == "home")
+    ss >> cmd;
+    if (cmd == "home")
     {
       std::cout << "Homing the stage..." << std::endl;
       bool homed = stage->home();
       if (!homed) std::cout << "Homing failed!" << std::endl;
     }
-    else if (stagecmd == "fhome")
+    else if (cmd == "fhome")
     {
       int64_t u, v;
       if (setValFromStream(u, 0ll, INT64_MAX, ss) &&
@@ -181,11 +233,11 @@ void processCommand(std::string cmdAndArgs, Settings& settings)
         stage->forceHomed(u, v);
       }
     }
-    else if (stagecmd == "speed")
+    else if (cmd == "speed")
     {
       setValFromStream(moveMmPerSec, 0.1, 1000.0, ss);
     }
-    else if (stagecmd == "move")
+    else if (cmd == "move")
     {
       double x, y;
       if (setValFromStream(x, 0.0, stage->sizeX, ss) &&
@@ -196,7 +248,7 @@ void processCommand(std::string cmdAndArgs, Settings& settings)
         stage->completeAllMoves();
       }
     }
-    else if (stagecmd == "circle")
+    else if (cmd == "circle")
     {
       int count;
       if (setValFromStream(count, 1, 60, ss))
@@ -206,7 +258,7 @@ void processCommand(std::string cmdAndArgs, Settings& settings)
         stage->completeAllMoves();
       }
     }
-    else if (stagecmd == "rel")
+    else if (cmd == "rel")
     {
       double x, y;
       if (setValFromStream(x, -stage->sizeX, stage->sizeX, ss) &&
@@ -217,7 +269,7 @@ void processCommand(std::string cmdAndArgs, Settings& settings)
         stage->completeAllMoves();
       }
     }
-    else if (stagecmd == "qmove")
+    else if (cmd == "qmove")
     {
       double x, y;
       if (setValFromStream(x, 0.0, stage->sizeX, ss) &&
@@ -226,7 +278,7 @@ void processCommand(std::string cmdAndArgs, Settings& settings)
         stage->moveTo(x, y, moveMmPerSec);
       }
     }
-    else if (stagecmd == "qrel")
+    else if (cmd == "qrel")
     {
       double x, y;
       if (setValFromStream(x, -stage->sizeX, stage->sizeX, ss) &&
@@ -235,7 +287,7 @@ void processCommand(std::string cmdAndArgs, Settings& settings)
         stage->moveRel(x, y, moveMmPerSec);
       }
     }
-    else if (stagecmd == "go")
+    else if (cmd == "go")
     {
       stage->completeAllMoves();
     }
@@ -243,56 +295,6 @@ void processCommand(std::string cmdAndArgs, Settings& settings)
     {
       std::cout << "unknown stage command error" << std::endl << std::flush;
       return;
-    }
-  }
-  else if (cmd == "move")
-  {
-    int stepper, steps;
-    if (setValFromStream(stepper, 0, 1, ss) &&
-        setValFromStream(steps, -200 * 16 * 10, 200 * 16 * 10, ss))
-    {
-      if (motors->getStepper(stepper)) motors->getStepper(stepper)->move(steps, moveRpm);
-    }
-  }
-  else if (cmd == "rpm")
-  {
-    setValFromStream(moveRpm, 0.1f, 3000.0f, ss);
-  }
-  else if (cmd == "movedeg")
-  {
-    int stepper;
-    float deg;
-    if (setValFromStream(stepper, 0, 1, ss) &&
-        setValFromStream(deg, -360.0f * 10.0f, 360.0f * 10.0f, ss))
-    {
-      if (motors->getStepper(stepper)) motors->getStepper(stepper)->moveDegrees(deg, moveRpm);
-    }
-  }
-  else if (cmd == "power")
-  {
-    int stepper;
-    float power;
-    if (setValFromStream(stepper, 0, 1, ss) &&
-        setValFromStream(power, 0.0f, 1.0f, ss))
-    {
-      if (motors->getStepper(stepper)) motors->getStepper(stepper)->setPower(power);
-    }
-  }
-  else if (cmd == "mode")
-  {
-    int stepper, mode;
-    if (setValFromStream(stepper, 0, 1, ss) &&
-        setValFromStream(mode, 0, 2, ss))
-    {
-      if (motors->getStepper(stepper)) motors->getStepper(stepper)->setMode((Stepper::Mode)mode);
-    }
-  }
-  else if (cmd == "release")
-  {
-    int stepper;
-    if (setValFromStream(stepper, 0, 1, ss))
-    {
-      if (motors->getStepper(stepper)) motors->getStepper(stepper)->release();
     }
   }
   else if (cmd == "releaseall")
@@ -315,6 +317,7 @@ void processStdIo(Settings& settings)
 {
   static char inBuf[1024];
   static int pos = 0;
+  static std::string lastCmd;
 
   while (true)
   {
@@ -324,10 +327,23 @@ void processStdIo(Settings& settings)
       inBuf[pos++] = (char)inchar;
       std::cout << (char)inchar << std::flush; // echo to client
     }
+    else if (inchar == '\b' && pos > 0) // handle backspaces
+    {
+      --pos;
+      std::cout << "\b \b" << std::flush;
+    }
+    else if (inchar == '\t' && lastCmd.size() < 1023) // handle tab to insert last command
+    {
+      while (pos-- > 0) std::cout << "\b \b" << std::flush;
+      memcpy(inBuf, lastCmd.data(), lastCmd.size());
+      pos = lastCmd.size();
+      std::cout << lastCmd << std::flush;
+    }
     else if (inchar == '\n')
     {
       inBuf[pos] = '\0';
       std::cout << std::endl << std::flush; // echo to client
+      lastCmd = inBuf;
       processCommand(inBuf, settings);
       pos = 0;
     }
@@ -353,9 +369,8 @@ int main()
 
   // Init the i2c bus and steppers
   // The docs for the motorkit hat say it supports up to
-  // 400k baud but we can probably get a little more from it...
-  // 600k seems stable and fine
-  I2CInterface i2c(i2c0, 0, 1, 600000);
+  // 1 MHz communication rate
+  I2CInterface i2c(i2c0, 0, 1, 1000000);
   motors = std::make_unique<MotorKit>(i2c);
 
   // Connect some NEMA-17 steppers with:

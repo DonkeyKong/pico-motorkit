@@ -237,6 +237,24 @@ void processCommand(std::string cmdAndArgs, Settings& settings)
     {
       setValFromStream(moveMmPerSec, 0.1, 1000.0, ss);
     }
+    else if (cmd == "power")
+    {
+      float power;
+      if (setValFromStream(power, 0.0f, 1.0f, ss))
+      {
+        if (motors->getStepper(0)) motors->getStepper(0)->setPower(power);
+        if (motors->getStepper(1)) motors->getStepper(1)->setPower(power);
+      }
+    }
+    else if (cmd == "mode")
+    {
+      int mode;
+      if (setValFromStream(mode, 0, 2, ss))
+      {
+        if (motors->getStepper(0)) motors->getStepper(0)->setMode((Stepper::Mode)mode);
+        if (motors->getStepper(1)) motors->getStepper(1)->setMode((Stepper::Mode)mode);
+      }
+    }
     else if (cmd == "move")
     {
       double x, y;

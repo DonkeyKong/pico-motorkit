@@ -187,6 +187,12 @@ public:
       return false;
     }
 
+    if (usPerUstepU == -1 && usPerUstepV == 1)
+    {
+      DEBUG_LOG("Movement does not go anywhere! Ignoring.");
+      return false;
+    }
+
     bool primaryAxisU = (usPerUstepV == -1 || usPerUstepU < usPerUstepV);
 
     // Push this move on to the stack and return true
@@ -237,6 +243,11 @@ public:
     }
     if (queuedMoves_[0].stepMove())
     {
+      // Transfer the next step time to the first step of the next move
+      if (queuedMoves_.size() > 1)
+      {
+        queuedMoves_[1].nextStepTime = queuedMoves_[0].nextStepTime;
+      }
       queuedMoves_.pop_front();
     }
     if (queuedMoves_.empty() && mode_ == StageMoveMode::Release)

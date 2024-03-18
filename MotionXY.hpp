@@ -187,7 +187,7 @@ public:
       return false;
     }
 
-    if (usPerUstepU == -1 && usPerUstepV == 1)
+    if (usPerUstepU == -1 && usPerUstepV == -1)
     {
       DEBUG_LOG("Movement does not go anywhere! Ignoring.");
       return false;
@@ -197,38 +197,19 @@ public:
 
     // Push this move on to the stack and return true
     // to indicate it has been sucessfully enqueued
-    if (primaryAxisU)
+    queuedMoves_.push_back(
     {
-      queuedMoves_.push_back(
-      {
-        .stepperS = stepperU_,
-        .stepperT = stepperV_,
-        .s = u_,
-        .t = v_,
-        .endS = endU,
-        .endT = endV,
-        .usPerUstepS = usPerUstepU,
-        .usPerUstepT = usPerUstepV,
-        .nextStepTime = get_absolute_time(),
-        .moveTimeSeconds = (distMm / mmPerSec)
-      });
-    }
-    else
-    {
-      queuedMoves_.push_back(
-      {
-        .stepperS = stepperV_,
-        .stepperT = stepperU_,
-        .s = v_,
-        .t = u_,
-        .endS = endV,
-        .endT = endU,
-        .usPerUstepS = usPerUstepV,
-        .usPerUstepT = usPerUstepU,
-        .nextStepTime = get_absolute_time(),
-        .moveTimeSeconds = (distMm / mmPerSec)
-      });
-    }
+      .stepperS = primaryAxisU ? stepperU_ : stepperV_,
+      .stepperT = primaryAxisU ? stepperV_ : stepperU_,
+      .s = primaryAxisU ? u_ : v_,
+      .t = primaryAxisU ? v_ : u_,
+      .endS = primaryAxisU ? endU : endV,
+      .endT = primaryAxisU ? endV : endU,
+      .usPerUstepS = primaryAxisU ? usPerUstepU : usPerUstepV,
+      .usPerUstepT = primaryAxisU ? usPerUstepV : usPerUstepU,
+      .nextStepTime = get_absolute_time(),
+      .moveTimeSeconds = (distMm / mmPerSec)
+    });
     return true;
   }
 
